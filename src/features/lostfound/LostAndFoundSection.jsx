@@ -7,8 +7,9 @@ import {
   doc,
   setDoc,
   addDoc,
-  where, // Import where for filtering
-  orderBy, // Import orderBy for consistent sorting
+  where,
+  orderBy,
+  deleteDoc,
 } from "firebase/firestore";
 import ItemCard from "../../components/ItemCard.jsx";
 import ItemForm from "../../components/ItemForm.jsx";
@@ -19,7 +20,7 @@ import EmptyState from "../../components/EmptyState.jsx";
 import PlusCircleIcon from "../../components/icons/PlusCircleIcon.jsx";
 import UserCircleIcon from "../../components/icons/UserCircleIcon.jsx";
 import AuthSensitiveControls from "./AuthSensitiveControls.jsx";
-import { ITEM_STATUS } from "../../config/constants"; // ITEM_STATUS is needed for active/inactive status
+import { ITEM_STATUS } from "../../config/constants";
 
 const LostAndFoundSection = ({
   user,
@@ -36,7 +37,7 @@ const LostAndFoundSection = ({
   const [filters, setFilters] = useState({
     category: "",
     sortBy: "newest",
-    status: "lost", // Default to 'lost' as 'all' is removed
+    status: "lost",
   });
   const [visibleItemsCount, setVisibleItemsCount] = useState(12);
 
@@ -53,7 +54,7 @@ const LostAndFoundSection = ({
     "Other",
   ];
 
-  // Status options for filtering (used in CompactFilterBar and new section tabs)
+  // Status options for filtering
   const statusOptions = [
     { value: "lost", label: "Lost Items" },
     { value: "found", label: "Found Items" },
@@ -77,7 +78,7 @@ const LostAndFoundSection = ({
     const itemsRef = collection(db, itemsCollectionPath);
     let q = query(itemsRef);
 
-    // Apply status filter from state - REMOVED IS_RESOLVED_FIELD
+    // Apply status filter from state
     q = query(q, where("status", "==", filters.status));
 
     // Apply default ordering
@@ -97,21 +98,21 @@ const LostAndFoundSection = ({
       (error) => {
         console.error("Error fetching L&F items: ", error);
         showMessage(
-          `Error fetching L&F items: ${error.message}. Check rules.`,
+          `Error fetching items: ${error.message}. Please try again.`,
           "error"
         );
         setLoading(false);
       }
     );
     return () => unsubscribe();
-  }, [showMessage, filters.status]); // Re-fetch when filters.status changes
+  }, [showMessage, filters.status]);
 
-  // Handle filter changes (from CompactFilterBar or new tabs)
+  // Handle filter changes
   const handleFilterChange = useCallback((newFilters) => {
     setFilters(newFilters);
   }, []);
 
-  // Process items based on search and other filters (excluding status, which is in query)
+  // Process items based on search and other filters
   const processedItems = useMemo(() => {
     let filtered = items.filter((item) => {
       // Global search from header
@@ -169,7 +170,14 @@ const LostAndFoundSection = ({
       throw new Error("User not logged in");
     }
 
-    const statusToSet = itemDataFromForm.dateFound ? "found" : "lost";
+    // When creating a new post, set status based on the active tab
+    // Only use dateFound to determine status when editing an existing item
+    const statusToSet = editingItem
+      ? itemDataFromForm.dateFound
+        ? "found"
+        : "lost"
+      : filters.status; // Use current tab for new items
+
     const fullItemData = { ...itemDataFromForm, status: statusToSet };
 
     try {
@@ -179,31 +187,15 @@ const LostAndFoundSection = ({
           fullItemData,
           { merge: true }
         );
-        showMessage("Post updated successfully!", "success", {
-          shareData: {
-            title: `${fullItemData.name} - Updated on LocalMart`,
-            text: `${statusToSet === "lost" ? "Lost" : "Found"}: ${
-              fullItemData.name
-            }`,
-            url: window.location.href,
-          },
-        });
+        showMessage("Post updated successfully!", "success");
       } else {
         await addDoc(collection(db, itemsCollectionPath), fullItemData);
-        showMessage("Post added successfully!", "success", {
-          shareData: {
-            title: `${fullItemData.name} - LocalMart Lost & Found`,
-            text: `${statusToSet === "lost" ? "Lost" : "Found"}: ${
-              fullItemData.name
-            }. ${fullItemData.description}`,
-            url: window.location.href,
-          },
-        });
+        showMessage("Post added successfully!", "success");
       }
       setEditingItem(null);
       setIsModalOpen(false);
     } catch (error) {
-      console.error("Error saving L&F item: ", error);
+      console.error("Error saving item: ", error);
       showMessage(`Error saving post: ${error.message}`, "error");
       throw error;
     }
@@ -216,9 +208,7 @@ const LostAndFoundSection = ({
       return;
     }
 
-    if (
-      !window.confirm("Are you sure you want to delete this post permanently?")
-    ) {
+    if (!window.confirm("Are you sure you want to delete this post?")) {
       return;
     }
 
@@ -231,8 +221,6 @@ const LostAndFoundSection = ({
     }
   };
 
-  // handleMarkAsResolved function REMOVED
-
   // Handle contact fallback
   const handleContactFallback = useCallback(
     (item) => {
@@ -241,10 +229,7 @@ const LostAndFoundSection = ({
         return;
       }
       if (!item.whatsappNumber) {
-        showMessage(
-          `User for "${item.name}" has not provided a WhatsApp number.`,
-          "info"
-        );
+        showMessage(`No contact information provided for this item.`, "info");
       }
     },
     [user, showMessage]
@@ -279,31 +264,8 @@ const LostAndFoundSection = ({
     setFilters((prev) => ({
       ...prev,
       category: "",
-      status: "lost", // Reset status to 'lost' as 'all' is removed
     }));
   }, [onSearchTermChange]);
-
-  // Get statistics
-  const stats = useMemo(() => {
-    // These totals refer to the 'items' state, which is already filtered by filters.status
-    const totalLostInView = items.filter(
-      (item) => (item.status || "lost") === ITEM_STATUS.LOST
-    ).length;
-    const totalFoundInView = items.filter(
-      (item) => item.status === ITEM_STATUS.FOUND
-    ).length;
-    const recentInView = items.filter((item) => {
-      const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
-      return (item.createdAt?.seconds || 0) * 1000 > dayAgo;
-    }).length;
-
-    return {
-      total: items.length, // Total items in the current 'lost' or 'found' view
-      lost: totalLostInView,
-      found: totalFoundInView,
-      recent: recentInView,
-    };
-  }, [items]);
 
   // Determine initial status for new item form based on active filter
   const initialFormStatus = useMemo(() => {
@@ -311,13 +273,13 @@ const LostAndFoundSection = ({
       return { status: ITEM_STATUS.LOST };
     if (filters.status === ITEM_STATUS.FOUND)
       return { status: ITEM_STATUS.FOUND };
-    return { status: ITEM_STATUS.LOST }; // Default to 'lost' if for some reason status is not set
+    return { status: ITEM_STATUS.LOST };
   }, [filters.status]);
 
   // Get current section label for UI
   const currentSectionLabel = useMemo(() => {
     const option = statusOptions.find((opt) => opt.value === filters.status);
-    return option ? option.label : "Items"; // Fallback label
+    return option ? option.label : "Items";
   }, [filters.status, statusOptions]);
 
   // Show loading skeleton
@@ -326,22 +288,25 @@ const LostAndFoundSection = ({
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      {/* Header Section */}
-      <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-3">
-        <div className="text-center sm:text-left">
-          <h2 className="text-2xl sm:text-3xl font-bold text-gray-800">
+    <div className="container mx-auto px-3 py-4">
+      {/* Compact Header with Integrated Search Status and Lost/Found Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div>
+          <h2 className="text-xl font-bold text-gray-800 inline-flex items-center">
             Lost & Found
+            {items.length > 0 && (
+              <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                {processedItems.length}{" "}
+                {processedItems.length === 1 ? "item" : "items"}
+              </span>
+            )}
           </h2>
-          <p className="text-gray-600 mt-1">
-            Help reunite people with their belongings
-          </p>
 
-          {/* Search Status */}
+          {/* Search Status - Inline and compact */}
           {globalSearchTerm && (
-            <div className="mt-3 inline-flex items-center space-x-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1">
+            <div className="flex items-center text-xs text-blue-600 mt-1">
               <svg
-                className="w-4 h-4 text-blue-600"
+                className="w-3 h-3 mr-1"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -353,103 +318,87 @@ const LostAndFoundSection = ({
                   d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
                 />
               </svg>
-              <span className="text-sm text-blue-800">
-                Searching: <strong>"{globalSearchTerm}"</strong>
-              </span>
+              <span>"{globalSearchTerm}"</span>
               <button
                 onClick={handleClearSearch}
-                className="text-blue-600 hover:text-blue-800"
+                className="ml-1 text-blue-700"
                 title="Clear search"
               >
-                <svg
-                  className="w-3 h-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
+                ×
               </button>
             </div>
           )}
         </div>
 
-        {user ? (
-          <button
-            onClick={openAddModal}
-            className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2.5 px-5 rounded-lg shadow-md flex items-center space-x-2 transition-all hover:shadow-lg"
-          >
-            <PlusCircleIcon />
-            <span>
-              {filters.status === ITEM_STATUS.LOST
-                ? "Post Lost Item"
-                : "Post Found Item"}{" "}
-              {/* Only two options now */}
-            </span>
-          </button>
-        ) : (
-          <button
-            onClick={() => navigateToAuth("login")}
-            className="bg-orange-500 hover:bg-orange-600 text-white font-semibold py-2.5 px-5 rounded-lg shadow-md flex items-center space-x-2 transition-all hover:shadow-lg"
-          >
-            <UserCircleIcon className="w-5 h-5" />
-            <span>Login to Post</span>
-          </button>
-        )}
-      </div>
+        {/* Compact Lost/Found Toggle, Filter and Add Button */}
+        <div className="flex items-center space-x-2">
+          <div className="bg-gray-100 rounded-lg overflow-hidden flex text-sm">
+            {statusOptions.map((option) => (
+              <button
+                key={option.value}
+                onClick={() =>
+                  handleFilterChange({ ...filters, status: option.value })
+                }
+                className={`px-3 py-1 font-medium ${
+                  filters.status === option.value
+                    ? "bg-indigo-600 text-white"
+                    : "text-gray-700 hover:bg-gray-200"
+                }`}
+              >
+                {option.value === "lost" ? "Lost" : "Found"}
+              </button>
+            ))}
+          </div>
 
-      {/* Section Tabs for Lost/Found */}
-      <div className="flex justify-center sm:justify-start space-x-2 p-1 bg-gray-200 rounded-lg mb-6">
-        {statusOptions.map((option) => (
-          <button
-            key={option.value}
-            onClick={() =>
-              handleFilterChange({ ...filters, status: option.value })
-            }
-            className={`px-4 py-2 rounded-md font-medium text-sm transition-colors duration-200 ${
-              filters.status === option.value
-                ? "bg-indigo-600 text-white shadow"
-                : "text-gray-700 hover:bg-gray-300"
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+          <CompactFilterBar
+            onFilterChange={handleFilterChange}
+            categories={["All", ...categoriesList]}
+            showPriceFilter={false}
+            showSortOptions={true}
+            showStatusFilter={false}
+            initialFilters={filters}
+            className="hidden sm:block"
+          />
 
-      {/* Compact Filter Bar */}
-      <CompactFilterBar
-        onFilterChange={handleFilterChange}
-        categories={["All", ...categoriesList]}
-        showPriceFilter={false}
-        showSortOptions={true}
-        showStatusFilter={false} // Hide status filter from CompactFilterBar as tabs handle it
-        statusOptions={statusOptions} // Still pass for internal logic, but not shown
-        initialFilters={filters}
-        className="mb-8"
-      />
-
-      {/* Results Count */}
-      {items.length > 0 && (
-        <div className="mb-6">
-          <p className="text-sm text-gray-600">
-            {processedItems.length === 0 ? (
-              `No items match your criteria in "${currentSectionLabel}"`
-            ) : (
-              <>
-                Showing {currentDisplayItems.length} of {processedItems.length}{" "}
-                items
-                {processedItems.length !== items.length && " (filtered)"}
-              </>
-            )}
-          </p>
+          {user ? (
+            <button
+              onClick={openAddModal}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white p-1.5 rounded-lg flex items-center"
+              title={`Post ${
+                filters.status === "lost" ? "Lost" : "Found"
+              } Item`}
+            >
+              <PlusCircleIcon className="w-5 h-5" />
+              <span className="sr-only sm:not-sr-only sm:ml-1 sm:mr-1">
+                Post
+              </span>
+            </button>
+          ) : (
+            <button
+              onClick={() => navigateToAuth("login")}
+              className="bg-orange-500 hover:bg-orange-600 text-white p-1.5 rounded-lg flex items-center"
+              title="Login to Post"
+            >
+              <UserCircleIcon className="w-5 h-5" />
+              <span className="sr-only sm:not-sr-only sm:ml-1 sm:mr-1">
+                Login
+              </span>
+            </button>
+          )}
         </div>
-      )}
+      </div>
+
+      {/* Compact Filter Bar - Mobile Only */}
+      <div className="sm:hidden bg-white shadow-sm rounded-lg p-2 mb-4">
+        <CompactFilterBar
+          onFilterChange={handleFilterChange}
+          categories={["All", ...categoriesList]}
+          showPriceFilter={false}
+          showSortOptions={true}
+          showStatusFilter={false}
+          initialFilters={filters}
+        />
+      </div>
 
       {/* Modal for Add/Edit Item */}
       <Modal
@@ -465,185 +414,189 @@ const LostAndFoundSection = ({
       >
         <ItemForm
           onSubmit={handleSubmitItem}
-          initialData={
-            editingItem || initialFormStatus // Pass initial status based on selected section
-          }
+          initialData={editingItem || initialFormStatus}
           type="lostfound"
           onFormProcessing={setIsFormProcessing}
         />
       </Modal>
 
-      {/* Content */}
-      {currentDisplayItems.length === 0 && !loading ? (
-        <div className="mt-8">
+      {/* Content - Empty States or Items Grid */}
+      {currentDisplayItems.length === 0 ? (
+        <div className="bg-white rounded-lg shadow-sm p-4 my-3">
           {items.length === 0 ? (
-            // No items at all in the current filtered view
             <EmptyState
               icon="search"
-              title={`No ${currentSectionLabel.toLowerCase()} yet`}
-              description={`Be the first to help your community by posting about ${currentSectionLabel.toLowerCase()}!`}
+              title={`No ${filters.status} items yet`}
+              description="Be the first to help your community!"
               actionButton={
                 user ? (
                   <button
                     onClick={openAddModal}
-                    className="bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-200 flex items-center space-x-2"
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg flex items-center space-x-1"
                   >
-                    <PlusCircleIcon />
+                    <PlusCircleIcon className="w-4 h-4" />
                     <span>
-                      {filters.status === ITEM_STATUS.LOST
-                        ? "Post Lost Item"
-                        : "Post Found Item"}
+                      Post {filters.status === "lost" ? "Lost" : "Found"} Item
                     </span>
                   </button>
                 ) : (
                   <button
                     onClick={() => navigateToAuth("login")}
-                    className="bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-200 flex items-center space-x-2"
+                    className="bg-orange-500 hover:bg-orange-600 text-white font-medium py-2 px-4 rounded-lg flex items-center space-x-1"
                   >
-                    <UserCircleIcon className="w-5 h-5" />
+                    <UserCircleIcon className="w-4 h-4" />
                     <span>Login to Post</span>
                   </button>
                 )
               }
-              className="py-16"
+              className="py-8"
             />
           ) : (
-            // No items match search/filters within the current section
             <EmptyState
               icon="search"
-              title="No items found"
+              title="No matches found"
               description={
                 globalSearchTerm
-                  ? `No items match "${globalSearchTerm}". Try different keywords or adjust your filters.`
-                  : `No ${currentSectionLabel.toLowerCase()} match your current filters. Try adjusting your search criteria.`
+                  ? `No matches for "${globalSearchTerm}"`
+                  : `Try adjusting your filters`
               }
               actionButton={
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <button
-                    onClick={handleClearSearch}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 px-5 rounded-lg shadow-md hover:shadow-lg transition-all duration-200"
-                  >
-                    Clear Filters
-                  </button>
-                  {user && (
-                    <button
-                      onClick={openAddModal}
-                      className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2.5 px-5 rounded-lg shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center space-x-2"
-                    >
-                      <PlusCircleIcon />
-                      <span>
-                        {filters.status === ITEM_STATUS.LOST
-                          ? "Post Lost Item"
-                          : "Post Found Item"}
-                      </span>
-                    </button>
-                  )}
-                </div>
+                <button
+                  onClick={handleClearSearch}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg"
+                >
+                  Clear Filters
+                </button>
               }
-              className="py-16"
+              className="py-6"
             />
           )}
         </div>
       ) : (
         <>
-          {/* Items Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {/* Space-Efficient Grid Layout */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3">
             {currentDisplayItems.map((item) => (
               <div
                 key={item.id}
-                className={`rounded-xl shadow-lg overflow-hidden border-2 transition-all hover:shadow-xl ${
-                  (item.status || ITEM_STATUS.LOST) === ITEM_STATUS.LOST // Default to 'lost' if status is undefined
-                    ? "border-red-300 bg-red-50"
-                    : "border-green-300 bg-green-50"
+                className={`rounded-lg shadow-sm overflow-hidden transition-all hover:shadow ${
+                  (item.status || ITEM_STATUS.LOST) === ITEM_STATUS.LOST
+                    ? "border-l-4 border-l-red-400 bg-white"
+                    : "border-l-4 border-l-green-400 bg-white"
                 } flex flex-col h-full`}
               >
-                <ItemCard
-                  item={item}
-                  onContact={handleContactFallback}
-                  isLostAndFound={true}
-                  showMessage={showMessage}
-                />
-                <AuthSensitiveControls
-                  item={item}
-                  user={user}
-                  onEdit={() => openEditModal(item)}
-                  onDelete={handleDeleteItem}
-                  // onMarkAsResolved={handleMarkAsResolved} // REMOVED
-                />
+                <div className="flex-grow">
+                  <ItemCard
+                    item={item}
+                    onContact={handleContactFallback}
+                    isLostAndFound={true}
+                    showMessage={showMessage}
+                  />
+                </div>
+                {user && user.uid === item.userId && (
+                  <div className="flex border-t border-gray-100">
+                    <button
+                      onClick={() => openEditModal(item)}
+                      className="flex-1 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-medium py-1.5 transition-colors"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeleteItem(item.id)}
+                      className="flex-1 bg-gray-50 hover:bg-red-50 text-red-600 text-xs font-medium py-1.5 transition-colors border-l border-gray-100"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
 
-          {/* Load More Button */}
+          {/* Compact Load More Button */}
           {visibleItemsCount < processedItems.length && (
-            <div className="text-center mt-10">
-              <button
-                onClick={handleLoadMore}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-200"
-              >
-                Load More ({processedItems.length - visibleItemsCount}{" "}
-                remaining)
-              </button>
-              <p className="text-xs text-gray-500 mt-2">
-                Showing {currentDisplayItems.length} of {processedItems.length}{" "}
-                items
-              </p>
-            </div>
+            <button
+              onClick={handleLoadMore}
+              className="mx-auto mt-4 block text-sm text-indigo-600 hover:text-indigo-800 border border-indigo-200 bg-white py-1.5 px-3 rounded-lg hover:bg-indigo-50 transition-colors"
+            >
+              Load {Math.min(8, processedItems.length - visibleItemsCount)} more
+            </button>
           )}
         </>
       )}
 
-      {/* Community Tips */}
+      {/* Compact Community Guidelines - Collapsible Tooltip */}
       {items.length > 0 && currentDisplayItems.length > 0 && (
-        <div className="mt-12 bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200 rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-3">
-            🤝 Community Guidelines
-          </h3>
-          <div className="grid md:grid-cols-2 gap-4 text-sm text-gray-700">
-            <div>
-              <h4 className="font-medium text-gray-900 mb-2">
-                If you found something:
-              </h4>
-              <ul className="space-y-1">
-                <li>• Post clear photos and description</li>
-                <li>• Include where and when you found it</li>
-                <li>• Ask for specific details to verify ownership</li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-medium text-gray-900 mb-2">
-                If you lost something:
-              </h4>
-              <ul className="space-y-1">
-                <li>• Provide detailed description and photos</li>
-                <li>• Include last known location and time</li>
-                <li>• Be prepared to verify ownership</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
+        <div className="mt-6 bg-white border border-gray-100 rounded-lg shadow-sm overflow-hidden">
+          <button
+            className="w-full text-left px-4 py-2 flex items-center justify-between text-sm font-medium text-gray-700 hover:bg-gray-50"
+            onClick={() => {
+              const el = document.getElementById("guidelines-content");
+              if (el) el.classList.toggle("hidden");
+            }}
+          >
+            <span className="flex items-center">
+              <span className="text-lg mr-2">🤝</span>
+              Community Guidelines
+            </span>
+            <svg
+              className="w-4 h-4 text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 9l-7 7-7-7"
+              />
+            </svg>
+          </button>
 
-      {/* Search Suggestions */}
-      {globalSearchTerm && processedItems.length === 0 && items.length > 0 && (
-        <div className="mt-8 bg-gray-50 rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-3">
-            Search Suggestions
-          </h3>
-          <div className="space-y-2">
-            <p className="text-sm text-gray-600">Try searching for:</p>
-            <div className="flex flex-wrap gap-2">
-              {categoriesList.slice(0, 6).map((category) => (
-                <button
-                  key={category}
-                  onClick={() => {
-                    onSearchTermChange?.(category.toLowerCase());
-                  }}
-                  className="px-3 py-1 bg-white border border-gray-200 rounded-full text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-                >
-                  {category}
-                </button>
-              ))}
+          <div
+            id="guidelines-content"
+            className="hidden border-t border-gray-100"
+          >
+            <div className="grid md:grid-cols-2 gap-3 p-3 text-xs">
+              <div className="bg-blue-50 p-2 rounded">
+                <h4 className="font-medium text-blue-800 mb-1">
+                  For found items:
+                </h4>
+                <ul className="space-y-0.5 text-blue-700">
+                  <li className="flex items-start">
+                    <span className="mr-1">•</span>
+                    <span>Post clear photos and description</span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="mr-1">•</span>
+                    <span>Include location and time found</span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="mr-1">•</span>
+                    <span>Verify ownership before returning</span>
+                  </li>
+                </ul>
+              </div>
+              <div className="bg-red-50 p-2 rounded">
+                <h4 className="font-medium text-red-800 mb-1">
+                  For lost items:
+                </h4>
+                <ul className="space-y-0.5 text-red-700">
+                  <li className="flex items-start">
+                    <span className="mr-1">•</span>
+                    <span>Provide detailed description</span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="mr-1">•</span>
+                    <span>Include last seen location/time</span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="mr-1">•</span>
+                    <span>Add contact information</span>
+                  </li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>
