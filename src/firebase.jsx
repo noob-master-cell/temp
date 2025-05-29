@@ -10,16 +10,15 @@ import {
   deleteObject,
 } from "firebase/storage";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyCsCXjZw8XZd6hhyXvNw5OOuDr6vxXHBQc",
-  authDomain: "localmartapp-ae7ee.firebaseapp.com",
-  projectId: "localmartapp-ae7ee",
-  storageBucket: "localmartapp-ae7ee.firebasestorage.app",
-  messagingSenderId: "455190095633",
-  appId: "1:455190095633:web:f9fe413b03ef148fb80eb0",
-  measurementId: "G-HC7P2PEQ0X",
+export const firebaseConfig = {
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID,
+  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
 };
-
 const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
 const authInstance = getAuth(app);
